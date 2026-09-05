@@ -1,0 +1,28 @@
+services:
+  freebuff2api:
+    build: .
+    image: freebuff2api:local
+    container_name: freebuff2api
+    restart: unless-stopped
+    ports:
+      - "8877:8787"
+    environment:
+      - PORT=8787
+      - HOST=0.0.0.0
+      - FREEBUFF_API_KEY=${FREEBUFF_API_KEY}
+      - RELAY_KEY=${RELAY_KEY}
+      - FREEBUFF_DEBUG=false
+      # Node 24 env proxy support：让 fetch 走 HTTPS_PROXY（free 模型要求美区出口）
+      # 默认 host.docker.internal:12450（跟随宿主机系统代理）；start-docker.ps1 启动时自动探测注入
+      - NODE_USE_ENV_PROXY=1
+      - HTTPS_PROXY=${HTTPS_PROXY:-http://host.docker.internal:12450}
+      - HTTP_PROXY=${HTTP_PROXY:-http://host.docker.internal:12450}
+      - NO_PROXY=localhost,127.0.0.1,host.docker.internal
+      # 注册服务（宿主机本地运行 register_service.py，端口 8899）
+      - REGISTER_SERVICE_URL=${REGISTER_SERVICE_URL:-http://host.docker.internal:8899}
+    volumes:
+      # 凭据目录（读写）：管理页面"移除账号"需写回 credentials 文件；
+      # banned_tokens.json 持久化也写在此目录，随挂载持久化到宿主机。
+      - ./credentials:/app/credentials
+      # 静态页面（读写）：改 accounts.html 即时生效，无需重建镜像
+      - ./static:/app/static

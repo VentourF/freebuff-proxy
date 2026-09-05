@@ -1,0 +1,13 @@
+{
+  "name": "freebuff2api-container",
+  "version": "1.7.0",
+  "type": "module",
+  "private": true,
+  "description": "freebuff-proxy: freebuff 模型转 OpenAI/Anthropic 兼容 API（Docker/Node）",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

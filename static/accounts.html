@@ -1,0 +1,628 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Freebuff2API 账号管理</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+tailwind.config = {
+  theme: {
+    extend: {
+      colors: {
+        bg: '#f6f7f9',
+        card: '#ffffff',
+        line: '#e5e7eb',
+        fg: '#1f2937',
+        dim: '#6b7280',
+        mint: '#16a34a',
+        coral: '#dc2626',
+        gold: '#d97706',
+        skyb: '#2563eb',
+      },
+    },
+  },
+};
+</script>
+<style type="text/tailwindcss">
+/* JS 动态生成的类（JIT 扫描不到 DOM 变化，需在 components 层显式声明） */
+@layer components {
+  .txt-dim { color: #6b7280; }
+  .nowrap { white-space: nowrap; }
+  .pill { @apply inline-flex items-center rounded-full px-2 py-0.5 text-[11px] leading-4 whitespace-nowrap; }
+  .pill.ok { @apply bg-green-100 text-green-700; }
+  .pill.unknown { @apply bg-gray-100 text-gray-500; }
+  .pill.bad { @apply bg-red-100 text-red-600; }
+  .pill.used { @apply bg-blue-100 text-blue-600; }
+  .pill.cooldown { @apply bg-amber-100 text-amber-600; }
+  .pill.banned { @apply bg-red-100 text-red-500 line-through; }
+  .badge { @apply inline-flex items-center ml-2 px-2.5 py-0.5 rounded-full text-xs; }
+  .badge.running { @apply bg-blue-100 text-blue-600; }
+  .badge.success { @apply bg-green-100 text-green-700; }
+  .badge.failed { @apply bg-red-100 text-red-600; }
+  .badge.wait_manual { @apply bg-amber-100 text-amber-600; }
+  .badge.pending { @apply bg-gray-100 text-gray-500; }
+  .badge.wait_code { @apply bg-sky-100 text-sky-600; }
+  .tbl-row td { @apply px-3 py-2.5 border-b border-line; }
+  code { @apply bg-gray-100 px-1.5 py-0.5 rounded text-xs text-fg; }
+  #log .ok { color: #4ade80; }
+  #log .err { color: #f87171; }
+  #log .warn { color: #fbbf24; }
+  #log .info { color: #9ca3af; }
+}
+/* 全局按钮（动态生成的"恢复/移除"按钮也依赖它） */
+button { @apply bg-white text-fg border border-line rounded-lg px-3.5 py-2 text-[13px] cursor-pointer transition-all duration-150 shadow-sm hover:border-mint hover:text-mint disabled:opacity-45 disabled:cursor-not-allowed; }
+button.primary { @apply bg-mint border-mint text-white font-semibold hover:bg-green-700 hover:border-green-700 hover:text-white; }
+button.danger:hover { @apply border-coral text-coral; }
+</style>
+</head>
+<body class="bg-bg text-fg font-sans min-h-screen overflow-x-hidden antialiased">
+<div class="max-w-6xl mx-auto px-4 py-6">
+
+  <!-- Header -->
+  <div class="mb-6">
+    <h1 class="text-2xl font-bold text-gray-900">Freebuff2API 账号管理</h1>
+    <p class="text-sm text-dim mt-1">注册 GitHub 账号 → 授权 Freebuff → 自动提取 authToken 入库（多账号自动切换）</p>
+  </div>
+
+  <!-- 服务状态 -->
+  <div class="bg-card border border-line rounded-2xl shadow-sm p-5 mb-5">
+    <h2 class="text-base font-semibold mb-3 flex items-center gap-2">服务状态</h2>
+    <div class="flex flex-wrap items-center gap-x-3 gap-y-2 text-sm" id="svc-status">加载中...</div>
+  </div>
+
+  <!-- 账号列表 -->
+  <div class="bg-card border border-line rounded-2xl shadow-sm p-5 mb-5">
+    <div class="flex items-center justify-between flex-wrap gap-2 mb-4">
+      <h2 class="text-base font-semibold flex items-center gap-2">账号列表</h2>
+      <button id="btn-reg" class="primary">＋ 注册新账号</button>
+    </div>
+
+    <!-- 注册选项 -->
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-3 bg-gray-50 border border-line rounded-xl p-4 mb-4" id="reg-opts">
+      <div>
+        <div class="txt-dim text-xs mb-1.5">自定义邮箱（留空 = 自动创建 CF 临时邮箱）</div>
+        <input type="text" id="reg-email" placeholder="如 you@example.com" autocomplete="off"
+               class="w-full bg-white border border-line rounded-lg px-3 py-2 text-sm text-fg placeholder:text-dim focus:outline-none focus:border-mint focus:ring-1 focus:ring-mint"/>
+      </div>
+      <div>
+        <div class="txt-dim text-xs mb-1.5">自定义代理（留空 = 直连，不使用代理）</div>
+        <div class="flex gap-2">
+          <input type="text" id="reg-proxy" placeholder="如 http://127.0.0.1:12450 或 socks5://..." autocomplete="off"
+                 class="flex-1 min-w-0 bg-white border border-line rounded-lg px-3 py-2 text-sm text-fg placeholder:text-dim focus:outline-none focus:border-mint focus:ring-1 focus:ring-mint"/>
+          <button id="btn-test-proxy" class="shrink-0">测试代理</button>
+        </div>
+        <div id="proxy-test-result" class="mt-1.5 text-xs text-dim"></div>
+      </div>
+    </div>
+
+    <!-- 表格 -->
+    <div class="overflow-x-auto rounded-xl border border-line">
+      <table class="w-full border-collapse text-sm">
+        <thead class="bg-gray-50">
+          <tr>
+            <th class="px-3 py-2.5 text-left text-xs font-medium text-dim uppercase tracking-wide">名称</th>
+            <th class="px-3 py-2.5 text-left text-xs font-medium text-dim uppercase tracking-wide">邮箱</th>
+            <th class="px-3 py-2.5 text-left text-xs font-medium text-dim uppercase tracking-wide">GitHub 密码</th>
+            <th class="px-3 py-2.5 text-left text-xs font-medium text-dim uppercase tracking-wide">Token</th>
+            <th class="px-3 py-2.5 text-left text-xs font-medium text-dim uppercase tracking-wide">注册时间</th>
+            <th class="px-3 py-2.5 text-left text-xs font-medium text-dim uppercase tracking-wide">状态</th>
+            <th class="px-3 py-2.5 text-left text-xs font-medium text-dim uppercase tracking-wide">最近使用</th>
+            <th class="px-3 py-2.5 text-left text-xs font-medium text-dim uppercase tracking-wide"></th>
+          </tr>
+        </thead>
+        <tbody id="acct-tbody" class="bg-white"><tr><td colspan="8" class="px-3 py-2.5 txt-dim">加载中...</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- CF 邮箱配置 -->
+  <div class="bg-card border border-line rounded-2xl shadow-sm p-5 mb-5" id="cf-config-card">
+    <div class="flex items-center justify-between flex-wrap gap-2 mb-4">
+      <h2 class="text-base font-semibold flex items-center gap-2">CF 临时邮箱配置</h2>
+      <button id="btn-cf-save" class="primary">保存配置</button>
+    </div>
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div>
+        <div class="txt-dim text-xs mb-1.5">CF Worker API 地址 (cf_api_base)</div>
+        <input type="text" id="cf-api-base" autocomplete="off"
+               class="w-full bg-white border border-line rounded-lg px-3 py-2 text-sm text-fg placeholder:text-dim focus:outline-none focus:border-mint focus:ring-1 focus:ring-mint"/>
+      </div>
+      <div>
+        <div class="txt-dim text-xs mb-1.5">CF 管理密码 (cf_admin_password)</div>
+        <input type="password" id="cf-admin-password" autocomplete="off"
+               class="w-full bg-white border border-line rounded-lg px-3 py-2 text-sm text-fg placeholder:text-dim focus:outline-none focus:border-mint focus:ring-1 focus:ring-mint"/>
+      </div>
+      <div class="md:col-span-2">
+        <div class="txt-dim text-xs mb-1.5">启用域名（按住 Ctrl 多选，注册时随机选用）</div>
+        <div class="flex gap-2">
+          <select id="cf-domain-select" multiple size="6"
+                  class="flex-1 min-w-0 bg-white border border-line rounded-lg px-3 py-2 text-sm text-fg focus:outline-none focus:border-mint focus:ring-1 focus:ring-mint">
+          </select>
+          <button id="btn-cf-fetch" class="shrink-0 text-xs self-start">拉取域名</button>
+        </div>
+      </div>
+      <div>
+        <div class="txt-dim text-xs mb-1.5">默认国家代码</div>
+        <div class="flex gap-2">
+          <input type="text" id="cf-country" placeholder="如 US / GB" autocomplete="off"
+                 class="flex-1 min-w-0 bg-white border border-line rounded-lg px-3 py-2 text-sm text-fg placeholder:text-dim focus:outline-none focus:border-mint focus:ring-1 focus:ring-mint"/>
+          <button id="btn-detect-country" class="shrink-0 text-xs">自动识别</button>
+        </div>
+      </div>
+      <div>
+        <div class="txt-dim text-xs mb-1.5">默认代理 (proxy，留空 = 直连)</div>
+        <input type="text" id="cf-proxy" placeholder="如 http://127.0.0.1:12450" autocomplete="off"
+               class="w-full bg-white border border-line rounded-lg px-3 py-2 text-sm text-fg placeholder:text-dim focus:outline-none focus:border-mint focus:ring-1 focus:ring-mint"/>
+      </div>
+    </div>
+    <div id="cf-config-msg" class="mt-3 text-xs text-dim"></div>
+  </div>
+
+  <!-- 注册任务 -->
+  <div class="bg-card border border-line rounded-2xl shadow-sm p-5" id="task-card" style="display:none">
+    <h2 class="text-base font-semibold mb-3 flex items-center gap-2">注册任务 <span id="task-badge" class="badge pending">pending</span></h2>
+    <div id="task-email" class="txt-dim text-sm mb-2.5"></div>
+    <div id="log" class="bg-gray-900 border border-gray-700 rounded-xl p-3 font-mono text-xs text-gray-200 max-h-[300px] overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-all"></div>
+
+    <div class="bg-amber-50 border border-amber-200 rounded-xl p-4 mt-3" id="manual-box" style="display:none">
+      <b class="text-amber-800">需要手动授权</b>
+      <p class="my-2 text-sm text-amber-700">自动化授权被 GitHub/Freebuff 风控拦截。请在新浏览器窗口（建议无痕）打开下面链接，登录 GitHub 并完成授权：</p>
+      <div id="manual-gh" class="my-1.5 text-sm"></div>
+      <a id="manual-url" href="#" target="_blank" class="text-skyb break-all"></a>
+      <div class="flex gap-2.5 mt-3">
+        <button id="btn-copy" class="">复制链接</button>
+        <button id="btn-complete" class="primary">我已完成授权</button>
+      </div>
+    </div>
+
+    <div class="bg-sky-50 border border-sky-200 rounded-xl p-4 mt-3" id="code-box" style="display:none">
+      <b class="text-sky-800">输入 GitHub 验证码</b>
+      <p class="my-2 text-sm text-sky-700">当前使用自定义邮箱，无法自动收取验证码。请查看邮箱收到的 8 位验证码并输入：</p>
+      <div class="flex gap-2">
+        <input type="text" id="code-input" placeholder="8 位验证码" autocomplete="off" maxlength="8"
+               class="flex-1 min-w-0 bg-white border border-line rounded-lg px-3 py-2 text-sm text-fg placeholder:text-dim focus:outline-none focus:border-skyb focus:ring-1 focus:ring-skyb"/>
+        <button id="btn-submit-code" class="shrink-0">提交验证码</button>
+      </div>
+    </div>
+
+    <div class="bg-green-50 border border-green-200 rounded-xl p-4 mt-3" id="result-box" style="display:none">
+      <b class="text-green-800">注册成功，已自动写入凭据文件（服务热加载，无需手动入库）</b>
+      <div class="mt-2 text-sm" id="result-detail"></div>
+      <div class="flex gap-2.5 mt-3">
+        <button id="btn-retry" class="">关闭</button>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let taskId = null;
+let polling = null;
+
+async function api(path, opts = {}) {
+  const r = await fetch(path, {
+    headers: { 'content-type': 'application/json' },
+    ...opts,
+  });
+  return r.json();
+}
+
+function esc(s) {
+  return String(s ?? '').replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function fmtTime(ts) {
+  if (!ts) return '—';
+  const d = new Date(ts);
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+function fmtDur(ms) {
+  if (!ms || ms <= 0) return '';
+  const s = Math.ceil(ms / 1000);
+  if (s < 60) return `${s}s`;
+  if (s < 3600) return `${Math.floor(s/60)}m${s%60}s`;
+  return `${Math.floor(s/3600)}h${Math.floor((s%3600)/60)}m`;
+}
+
+// 上游账号状态 → 中文说明（title 提示）
+const STATE_LABELS = {
+  blocked: '被拦截(403)',
+  token_invalid: 'Token 失效',
+  rate_limited: '限流中',
+  country_blocked: '地区受限',
+  model_locked: '模型未解锁',
+  ip_capped: 'IP 额度耗尽',
+};
+const STATE_TIPS = {
+  blocked: '上游返回 403 但非封号终态：多为出口 IP 被瞬时风控（代理节点非美区/被标记）。账号未被封，10 分钟后自动重试自愈',
+  token_invalid: '上游返回 401：token 已失效，不会再参与调度',
+  rate_limited: '上游返回 429：额度/频率限流，冷却后自动恢复',
+  country_blocked: '上游明确返回地区受限：需美区出口代理',
+  model_locked: '该模型对账号未解锁',
+  ip_capped: '当前出口 IP 的共享额度已耗尽',
+};
+
+function statusPill(a) {
+  if (a.removed) return `<span class="pill banned">暂停调度</span>`;
+  if (a.inUse) return `<span class="pill used">使用中</span>`;
+  if (a.inCooldown) return `<span class="pill cooldown">冷却 ${fmtDur(a.cooldownRemainingMs)}</span>`;
+  if (a.alive === true) return `<span class="pill ok">健康</span>`;
+  if (a.alive === false) {
+    const label = STATE_LABELS[a.state] || a.state || '失效';
+    const tip = STATE_TIPS[a.state] || '上游判定账号不可用';
+    // 失效观测已过期（>10 分钟）：账号已重新参与调度，等待下次请求自愈
+    if (a.staleFail) return `<span class="pill cooldown" title="${esc(tip)}">重试中（${esc(label)}）</span>`;
+    return `<span class="pill bad" title="${esc(tip)}">${esc(label)}</span>`;
+  }
+  return `<span class="pill unknown">？ 未知</span>`;
+}
+
+async function refreshStatus() {
+  const h = await api('/admin/api/health');
+  const p = h.pool || {};
+  let poolHtml = '';
+  if (h.pool) {
+    poolHtml =
+      `　账号池: <b>${p.accounts ?? 0}</b> 个` +
+      `　<span class="pill ok">存活 ${p.alive ?? 0}</span>` +
+      `　<span class="pill bad">失效 ${p.unhealthy ?? 0}</span>` +
+      `　<span class="pill unknown">未知 ${p.unknown ?? 0}</span>` +
+      `　<span class="pill cooldown">冷却中 ${p.inCooldown ?? 0}</span>` +
+      `　<span class="pill used">使用中 ${p.inUse ?? 0}</span>` +
+      (p.bannedRemoved ? `　<span class="pill banned">待清出 ${p.bannedRemoved}</span>` : '') +
+      (p.bannedTotal ? `　<span class="pill banned" title="banned 为终态，已从账号列表移出且不参与调度">累计移出 ${p.bannedTotal}</span>` : '');
+  }
+  $('svc-status').innerHTML =
+    `注册服务: <span class="pill ${h.registerService === 'ok' ? 'ok' : 'bad'}">${h.registerService}</span>` +
+    `　API 服务: <span class="pill ok">ok</span>` + poolHtml;
+}
+
+async function refreshAccounts() {
+  const { accounts } = await api('/admin/api/accounts');
+  if (!accounts || accounts.length === 0) {
+    $('acct-tbody').innerHTML = '<tr><td colspan="8" class="px-3 py-2.5 txt-dim">暂无账号，点击右上角注册</td></tr>';
+    return;
+  }
+  $('acct-tbody').innerHTML = accounts.map((a) => `
+    <tr class="tbl-row">
+      <td class="font-medium">${esc(a.name || '-')}</td>
+      <td>${esc(a.email || '-')}</td>
+      <td><code>${esc(a.password || '-')}</code></td>
+      <td><code>${esc(a.token)}</code></td>
+      <td class="txt-dim">${fmtTime(a.registeredAt)}</td>
+      <td>${statusPill(a)}</td>
+      <td class="txt-dim">${a.lastUsedAt ? fmtTime(a.lastUsedAt) : '—'}</td>
+      <td class="nowrap">${a.removed
+        ? `<button class="" onclick="restoreAcct('${esc(a.id)}')">恢复</button>`
+        : `<button class="danger" onclick="removeAcct('${esc(a.id)}')">移除</button>`}</td>
+    </tr>`).join('');
+}
+
+async function restoreAcct(id) {
+  if (!confirm('恢复该账号参与调度？（解除 banned 暂停）')) return;
+  try {
+    const r = await api('/admin/api/accounts/restore', { method: 'POST', body: JSON.stringify({ id }) });
+    if (r.ok) {
+      await refreshAccounts();
+      await refreshStatus();
+    } else {
+      alert('恢复失败: ' + (r.error || r.message || '未知错误'));
+    }
+  } catch (e) {
+    setTimeout(() => { refreshAccounts(); refreshStatus(); }, 2000);
+  }
+}
+
+async function removeAcct(id) {
+  if (!confirm('确定移除该账号？')) return;
+  try {
+    const r = await api('/admin/api/accounts/remove', { method: 'POST', body: JSON.stringify({ id }) });
+    if (r.ok) {
+      // 移除后立即刷新（热加载，无需重启），失败时重试
+      await refreshAccounts();
+      await refreshStatus();
+    } else {
+      alert('移除失败: ' + (r.error || r.message || '未知错误'));
+    }
+  } catch (e) {
+    // 网络错误等，稍后重试刷新
+    setTimeout(() => { refreshAccounts(); refreshStatus(); }, 2000);
+  }
+}
+
+function appendLog(entry) {
+  const div = document.createElement('div');
+  div.className = entry.level || 'info';
+  div.textContent = `[${entry.ts}] ${entry.msg}`;
+  $('log').appendChild(div);
+  $('log').scrollTop = $('log').scrollHeight;
+}
+
+function renderTask(t) {
+  const badge = $('task-badge');
+  badge.className = `badge ${t.status}`;
+  badge.textContent = t.status;
+  if (t.email) $('task-email').textContent = `邮箱: ${t.email}`;
+  const manual = $('manual-box');
+  if (t.status === 'wait_manual' && t.manual_url) {
+    manual.style.display = 'block';
+    $('manual-url').href = t.manual_url;
+    $('manual-url').textContent = t.manual_url;
+    $('manual-gh').innerHTML = t.username
+      ? `GitHub 账号: <code>${esc(t.username)}</code>　密码: <code>${esc(t.password)}</code>（用于在浏览器登录 GitHub 完成授权）`
+      : '';
+  }
+  const codeBox = $('code-box');
+  if (t.status === 'wait_code') {
+    codeBox.style.display = 'block';
+    $('code-input').value = '';
+    $('code-input').focus();
+  } else {
+    codeBox.style.display = 'none';
+  }
+  const rb = $('result-box');
+  if (t.status === 'success' && t.result) {
+    rb.style.display = 'block';
+    $('result-detail').innerHTML =
+      `名称: <b>${esc(t.result.name)}</b><br/>邮箱: ${esc(t.result.email)}<br/>` +
+      `用户ID: <code>${esc(t.result.userId)}</code><br/>` +
+      `authToken: <code>${esc(t.result.authToken)}</code>`;
+    stopPolling();
+    $('btn-reg').disabled = false;   // 成功后可立即注册下一轮
+    $('btn-reg').textContent = '＋ 注册新账号';
+  }
+  if (t.status === 'failed') {
+    stopPolling();
+    $('btn-reg').disabled = false;   // 失败后恢复按钮可重试
+  }
+}
+
+async function pollTask() {
+  if (!taskId) return;
+  const t = await api(`/admin/api/task/${taskId}`);
+  const known = new Set();
+  $('log').querySelectorAll('div').forEach((d) => known.add(d.textContent));
+  (t.logs || []).forEach((e) => {
+    const key = `[${e.ts}] ${e.msg}`;
+    if (!known.has(key)) appendLog(e);
+  });
+  renderTask(t);
+}
+
+function startPolling() {
+  stopPolling();
+  polling = setInterval(pollTask, 2500);
+  pollTask();
+}
+function stopPolling() {
+  if (polling) { clearInterval(polling); polling = null; }
+}
+
+$('btn-reg').addEventListener('click', async () => {
+  if (taskId) { alert('已有任务进行中'); return; }
+  $('task-card').style.display = 'block';
+  $('log').innerHTML = '';
+  $('manual-box').style.display = 'none';
+  $('result-box').style.display = 'none';
+  $('btn-reg').disabled = true;
+  const email = $('reg-email').value.trim();
+  const proxy = $('reg-proxy').value.trim();
+  const body = { email, proxy };
+  if (email) body.auto_mail = false;
+  const r = await api('/admin/api/register', { method: 'POST', body: JSON.stringify(body) });
+  taskId = r.task_id;
+  startPolling();
+});
+
+$('btn-test-proxy').addEventListener('click', async () => {
+  const btn = $('btn-test-proxy');
+  const result = $('proxy-test-result');
+  const proxy = $('reg-proxy').value.trim();
+  btn.disabled = true;
+  btn.textContent = '测试中...';
+  result.className = 'mt-1.5 text-xs text-dim';
+  result.textContent = proxy ? '通过指定代理访问 ip-api.com 检测中...' : '直连访问 ip-api.com 检测中...';
+  try {
+    const r = await api('/admin/api/test-proxy', { method: 'POST', body: JSON.stringify({ proxy }) });
+    if (r.ok) {
+      const flag = proxy ? (r.proxyFlag ? '检测为代理IP' : '代理出口') : '直连出口';
+      result.innerHTML =
+        `代理可用　延迟 <b>${r.latency_ms}ms</b><br/>` +
+        `出口 IP: <code>${esc(r.ip)}</code>　地区: <b>${esc(r.country || '-')} ${esc(r.region || '')} ${esc(r.city || '')}</b><br/>` +
+        `ISP: <code>${esc(r.isp || '-')}</code>　${flag}`;
+      result.className = 'mt-1.5 text-xs text-green-700';
+    } else {
+      result.textContent = `代理不可用: ${esc(r.error || '未知错误')}`;
+      result.className = 'mt-1.5 text-xs text-coral';
+    }
+  } catch (e) {
+    result.textContent = `请求失败: ${esc(e.message || '未知错误')}`;
+    result.className = 'mt-1.5 text-xs text-coral';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '测试代理';
+  }
+});
+
+$('btn-copy').addEventListener('click', async () => {
+  try { await navigator.clipboard.writeText($('manual-url').href); alert('已复制'); }
+  catch { prompt('复制链接:', $('manual-url').href); }
+});
+
+$('btn-complete').addEventListener('click', async () => {
+  $('btn-complete').disabled = true;
+  const r = await api(`/admin/api/complete/${taskId}`, { method: 'POST' });
+  if (r && r.authToken) {
+    $('btn-complete').disabled = false;
+    pollTask();
+  } else {
+    $('btn-complete').disabled = false;
+    alert('尚未完成授权，请稍候重试（需先在浏览器完成授权）');
+  }
+});
+
+$('btn-submit-code').addEventListener('click', async () => {
+  const code = $('code-input').value.trim();
+  if (!code || code.length < 6) { alert('请输入 8 位 GitHub 验证码'); return; }
+  $('btn-submit-code').disabled = true;
+  try {
+    const r = await api(`/admin/api/submit-code/${taskId}`, { method: 'POST', body: JSON.stringify({ code }) });
+    if (r.ok) {
+      $('code-box').style.display = 'none';
+      $('code-input').value = '';
+    } else {
+      alert('提交失败: ' + (r.error || '未知错误'));
+    }
+  } catch (e) {
+    alert('提交失败: ' + (e.message || '未知错误'));
+  } finally {
+    $('btn-submit-code').disabled = false;
+  }
+});
+
+$('btn-retry').addEventListener('click', () => {
+  taskId = null; stopPolling();
+  $('task-card').style.display = 'none';
+  $('btn-reg').disabled = false;
+  refreshAccounts();
+});
+
+// ---------- CF 临时邮箱配置 ----------
+// 下拉多选域名：所有 option = cf_domains（全量），选中项 = cf_selected_domains（启用）
+function fillDomainSelect(allDomains, selectedDomains) {
+  const sel = $('cf-domain-select');
+  sel.innerHTML = '';
+  (allDomains || []).forEach((d) => {
+    const opt = document.createElement('option');
+    opt.value = d;
+    opt.textContent = d;
+    if ((selectedDomains || []).includes(d)) opt.selected = true;
+    sel.appendChild(opt);
+  });
+}
+
+function getSelectedDomains() {
+  return Array.from($('cf-domain-select').selectedOptions).map((o) => o.value.trim()).filter(Boolean);
+}
+
+function getAllDomains() {
+  return Array.from($('cf-domain-select').options).map((o) => o.value.trim()).filter(Boolean);
+}
+
+async function loadCfConfig() {
+  try {
+    const cfg = await api('/admin/api/cf-config');
+    $('cf-api-base').value = cfg.cf_api_base || '';
+    $('cf-admin-password').value = cfg.cf_admin_password || '';
+    fillDomainSelect(cfg.cf_domains, cfg.cf_selected_domains);
+    $('cf-country').value = cfg.country || '';
+    $('cf-proxy').value = cfg.proxy || '';
+    // 自动识别国家（如果当前为空或系统默认值，调用 geoip 检测并填入+保存）
+    autoDetectCountry();
+  } catch (e) {
+    $('cf-config-msg').textContent = '配置加载失败: ' + (e.message || '未知错误');
+    $('cf-config-msg').className = 'mt-3 text-xs text-coral';
+  }
+}
+
+async function fetchCfDomains() {
+  const btn = $('btn-cf-fetch');
+  const msg = $('cf-config-msg');
+  btn.disabled = true;
+  btn.textContent = '拉取中...';
+  msg.className = 'mt-3 text-xs text-dim';
+  msg.textContent = '正在从 CF Worker 拉取域名...';
+  const body = {
+    api_base: $('cf-api-base').value.trim(),
+    admin_password: $('cf-admin-password').value.trim(),
+    proxy: $('cf-proxy').value.trim(),
+  };
+  try {
+    const r = await api('/admin/api/cf-fetch-domains', { method: 'POST', body: JSON.stringify(body) });
+    if (r.ok && r.domains && r.domains.length) {
+      // 默认全选新拉取的域名
+      fillDomainSelect(r.domains, r.domains);
+      msg.textContent = `已拉取 ${r.domains.length} 个域名，默认全选，可按住 Ctrl 调整后保存`;
+      msg.className = 'mt-3 text-xs text-green-700';
+    } else {
+      msg.textContent = '拉取失败: ' + (r.message || '未知错误');
+      msg.className = 'mt-3 text-xs text-coral';
+    }
+  } catch (e) {
+    msg.textContent = '拉取失败: ' + (e.message || '未知错误');
+    msg.className = 'mt-3 text-xs text-coral';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '拉取域名';
+  }
+}
+
+async function autoDetectCountry() {
+  const input = $('cf-country');
+  try {
+    const r = await api('/admin/api/test-proxy', { method: 'POST', body: JSON.stringify({ proxy: '' }) });
+    if (r.ok && r.countryCode) {
+      const detected = String(r.countryCode).toUpperCase();
+      const current = input.value.trim().toUpperCase();
+      if (detected !== current) {
+        input.value = detected;
+        $('cf-config-msg').textContent = `已自动识别国家并更新为: ${detected} (${r.country || ''})`;
+        $('cf-config-msg').className = 'mt-3 text-xs text-green-700';
+        await saveCfConfig();
+      } else {
+        $('cf-config-msg').textContent = `国家代码已是最新: ${detected} (${r.country || ''})`;
+        $('cf-config-msg').className = 'mt-3 text-xs text-dim';
+      }
+    }
+  } catch (e) {
+    $('cf-config-msg').textContent = '国家识别失败: ' + (e.message || '未知错误');
+    $('cf-config-msg').className = 'mt-3 text-xs text-coral';
+  }
+}
+
+async function saveCfConfig() {
+  const btn = $('btn-cf-save');
+  const msg = $('cf-config-msg');
+  btn.disabled = true;
+  const body = {
+    cf_api_base: $('cf-api-base').value.trim(),
+    cf_admin_password: $('cf-admin-password').value.trim(),
+    cf_domains: getAllDomains(),
+    cf_selected_domains: getSelectedDomains(),
+    country: $('cf-country').value.trim(),
+    proxy: $('cf-proxy').value.trim(),
+  };
+  try {
+    const r = await api('/admin/api/cf-config', { method: 'POST', body: JSON.stringify(body) });
+    if (r.ok) {
+      msg.textContent = '已保存到 web_config.json，注册时自动生效';
+      msg.className = 'mt-3 text-xs text-green-700';
+    } else {
+      msg.textContent = '保存失败: ' + (r.error || '未知错误');
+      msg.className = 'mt-3 text-xs text-coral';
+    }
+  } catch (e) {
+    msg.textContent = '保存失败: ' + (e.message || '未知错误');
+    msg.className = 'mt-3 text-xs text-coral';
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+$('btn-detect-country').addEventListener('click', autoDetectCountry);
+$('btn-cf-fetch').addEventListener('click', fetchCfDomains);
+
+$('btn-cf-save').addEventListener('click', saveCfConfig);
+
+refreshStatus();
+refreshAccounts();
+loadCfConfig();
+setInterval(refreshAccounts, 15000);
+</script>
+</body>
+</html>
