@@ -57,6 +57,16 @@ button.danger:hover { @apply border-coral text-coral; }
 </style>
 </head>
 <body class="bg-bg text-fg font-sans min-h-screen overflow-x-hidden antialiased">
+
+  <!-- 注册成功横幅通知（fixed 顶部，自动消失 + 手动关闭） -->
+  <div id="banner" class="hidden fixed top-0 left-0 right-0 z-50 flex justify-center px-4 pt-4 pointer-events-none">
+    <div class="pointer-events-auto w-full max-w-lg bg-green-600 text-white rounded-xl shadow-lg px-4 py-3 flex items-start gap-3">
+      <span class="text-xl leading-none">✅</span>
+      <div id="banner-body" class="flex-1 min-w-0 text-sm leading-relaxed break-all"></div>
+      <button id="banner-close" class="shrink-0 text-white/80 hover:text-white text-xl leading-none" title="关闭">&times;</button>
+    </div>
+  </div>
+
 <div class="max-w-6xl mx-auto px-4 py-6">
 
   <!-- Header -->
@@ -213,6 +223,21 @@ async function api(path, opts = {}) {
 function esc(s) {
   return String(s ?? '').replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
+
+// ---- 横幅通知 ----
+let bannerTimer = null;
+function showBanner(html) {
+  $('banner-body').innerHTML = html;
+  $('banner').classList.remove('hidden');
+  clearTimeout(bannerTimer);
+  bannerTimer = setTimeout(hideBanner, 10000);   // 10s 自动消失
+}
+function hideBanner() {
+  clearTimeout(bannerTimer);
+  bannerTimer = null;
+  $('banner').classList.add('hidden');
+}
+$('banner-close').addEventListener('click', hideBanner);
 
 function fmtTime(ts) {
   if (!ts) return '—';
@@ -372,6 +397,13 @@ function renderTask(t) {
       `名称: <b>${esc(t.result.name)}</b><br/>邮箱: ${esc(t.result.email)}<br/>` +
       `用户ID: <code>${esc(t.result.userId)}</code><br/>` +
       `authToken: <code>${esc(t.result.authToken)}</code>`;
+    // 成功横幅通知（顶部弹出，10s 自动消失）
+    showBanner(
+      `<b>注册成功，已自动写入凭据文件（服务热加载，无需手动入库）</b><br/>` +
+      `名称: <b>${esc(t.result.name)}</b> · 邮箱: ${esc(t.result.email)}<br/>` +
+      `用户ID: <code>${esc(t.result.userId)}</code><br/>` +
+      `authToken: <code>${esc(t.result.authToken)}</code>`
+    );
     stopPolling();
     $('btn-reg').disabled = false;   // 成功后可立即注册下一轮
     $('btn-reg').textContent = '＋ 注册新账号';
