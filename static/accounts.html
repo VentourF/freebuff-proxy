@@ -522,6 +522,8 @@ async function loadCfConfig() {
     fillDomainSelect(cfg.cf_domains, cfg.cf_selected_domains);
     $('cf-country').value = cfg.country || '';
     $('cf-proxy').value = cfg.proxy || '';
+    // 同步预填"自定义代理"测试/注册框（留空仍可手动改）
+    if ($('reg-proxy').value === '') $('reg-proxy').value = cfg.proxy || '';
     // 自动识别国家（如果当前为空或系统默认值，调用 geoip 检测并填入+保存）
     autoDetectCountry();
   } catch (e) {
@@ -565,7 +567,9 @@ async function fetchCfDomains() {
 async function autoDetectCountry() {
   const input = $('cf-country');
   try {
-    const r = await api('/admin/api/test-proxy', { method: 'POST', body: JSON.stringify({ proxy: '' }) });
+    // 用已保存的代理探测出口国家（留空 = 直连），避免误测直连出口
+    const proxy = $('cf-proxy').value.trim();
+    const r = await api('/admin/api/test-proxy', { method: 'POST', body: JSON.stringify({ proxy }) });
     if (r.ok && r.countryCode) {
       const detected = String(r.countryCode).toUpperCase();
       const current = input.value.trim().toUpperCase();
