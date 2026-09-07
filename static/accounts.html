@@ -54,16 +54,34 @@ tailwind.config = {
 button { @apply bg-white text-fg border border-line rounded-lg px-3.5 py-2 text-[13px] cursor-pointer transition-all duration-150 shadow-sm hover:border-mint hover:text-mint disabled:opacity-45 disabled:cursor-not-allowed; }
 button.primary { @apply bg-mint border-mint text-white font-semibold hover:bg-green-700 hover:border-green-700 hover:text-white; }
 button.danger:hover { @apply border-coral text-coral; }
+
+/* 横幅滑入动画 */
+.banner-enter { animation: banner-slide 0.35s cubic-bezier(0.21, 1.02, 0.73, 1) both; }
+@keyframes banner-slide {
+  from { opacity: 0; transform: translateY(-16px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
 </style>
 </head>
 <body class="bg-bg text-fg font-sans min-h-screen overflow-x-hidden antialiased">
 
-  <!-- 注册成功横幅通知（fixed 顶部，自动消失 + 手动关闭） -->
-  <div id="banner" class="hidden fixed top-0 left-0 right-0 z-50 flex justify-center px-4 pt-4 pointer-events-none">
-    <div class="pointer-events-auto w-full max-w-lg bg-green-600 text-white rounded-xl shadow-lg px-4 py-3 flex items-start gap-3">
-      <span class="text-xl leading-none">✅</span>
-      <div id="banner-body" class="flex-1 min-w-0 text-sm leading-relaxed break-all"></div>
-      <button id="banner-close" class="shrink-0 text-white/80 hover:text-white text-xl leading-none" title="关闭">&times;</button>
+  <!-- 注册成功横幅通知（fixed 顶部居中，滑入动画 + 自动消失） -->
+  <div id="banner" class="hidden fixed top-5 left-0 right-0 z-50 flex justify-center px-4 pointer-events-none">
+    <div class="banner-enter pointer-events-auto w-full max-w-md bg-white border border-green-200 rounded-2xl shadow-xl overflow-hidden flex">
+      <div class="w-1.5 shrink-0 bg-gradient-to-b from-emerald-400 to-green-600"></div>
+      <div class="flex items-start gap-3 p-4 pl-3.5 flex-1 min-w-0">
+        <span class="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-emerald-600">
+          <svg viewBox="0 0 20 20" fill="currentColor" class="h-5 w-5" aria-hidden="true">
+            <path fill-rule="evenodd" d="M16.704 4.153a.75.75 0 0 1 .143 1.052l-8 10.5a.75.75 0 0 1-1.127.075l-4.5-4.5a.75.75 0 0 1 1.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 0 1 1.05-.143Z" clip-rule="evenodd"/>
+          </svg>
+        </span>
+        <div id="banner-body" class="flex-1 min-w-0 text-sm leading-relaxed text-fg"></div>
+        <button id="banner-close" class="shrink-0 -mt-0.5 -mr-1 flex h-6 w-6 items-center justify-center rounded-md text-dim hover:bg-gray-100 hover:text-fg transition-colors" title="关闭">
+          <svg viewBox="0 0 20 20" fill="currentColor" class="h-4 w-4" aria-hidden="true">
+            <path d="M6.28 5.22a.75.75 0 0 0-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 1 0 1.06 1.06L10 11.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L11.06 10l3.72-3.72a.75.75 0 0 0-1.06-1.06L10 8.94 6.28 5.22Z"/>
+          </svg>
+        </button>
+      </div>
     </div>
   </div>
 
