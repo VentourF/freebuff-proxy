@@ -43,6 +43,8 @@ freebuff_tools/test_extract_freebuff_quota.py
 # ⚠️ 本机/调试残留，绝不提交
 # CF 临时邮箱真实配置（含域名/密钥），参考 oc/web_config.example.json（如需）
 oc/web_config.json
+# 本地调试残留（页面抓包/验证码调试页），绝不提交
+oc/*_debug.html
 .test_profile/
 *.exe
 worker.js.tmp

@@ -751,6 +751,25 @@ function pickToken(env, sessionModel, clientId = "") {
     }
   }
 
+  // v1.10.0 空闲优先（多会话分散）：走到这里说明"本客户端在该模型下没有活跃 session"，
+  // 即这是一个新会话/新客户端。此时优先调度**空闲账号**——未被任何客户端租用
+  // session（isTokenClaimedByOther=false）、未冷却的号，轮询分散。
+  // 这样同时开多个会话时，各自落到不同账号上，避免都堆在第一个被创建的账号；
+  // 而同一会话的多轮对话仍由上面的"钉号"阶段接管（复用 session 不扣额度）。
+  if (sessionModel) {
+    const idle = finalPool.filter((acct) => {
+      const t = acct.token;
+      if (cooldowns.has(t) && cooldowns.get(t) > Date.now()) return false;
+      if (isTokenClaimedByOther(t, clientId)) return false; // 该号 session 已被其他客户端租用
+      return true;
+    });
+    if (idle.length > 0) {
+      const pick = idle[accountIdx % idle.length];
+      accountIdx = (accountIdx + 1) % idle.length;
+      return markUsed(pick);
+    }
+  }
+
   // 没有活跃缓存则简单轮询（v1.9.3：不再按剩余额度排序，避免拉取额度快照消耗次数）。
   // 冷却中的号排最后；其余保持原顺序（轮询指针分摊）。
   const sorted = [...finalPool].map((acct) => {
@@ -1479,12 +1498,16 @@ async function resolveModelConfig(modelId) {
   return findModelConfig(modelId);
 }
 
-// 提取客户端标识（多主机共用反代时隔离账号池）：
-// 优先 x-freebuff-client 头，其次 x-client-id，缺省 "default"
-function getClientId(request) {
+// 提取客户端标识（多主机/多会话共用反代时隔离账号池）：
+// 优先级：x-freebuff-client 头 > x-client-id 头 > 请求体 user 字段 > 缺省 "default"
+// 同一个客户端开多个会话时，给每个会话配不同的 user（或 x-freebuff-client 头），
+// 即可让各会话分散到不同账号（配合 pickToken 的空闲优先调度）。
+function getClientId(request, params = null) {
   const h = request.headers.get("x-freebuff-client") || request.headers.get("x-client-id") || "";
   const v = h.trim();
-  return v ? v.slice(0, 64) : "default";
+  if (v) return v.slice(0, 64);
+  const u = (params && typeof params.user === "string" ? params.user : "").trim();
+  return u ? "user:" + u.slice(0, 48) : "default";
 }
 
 async function handleChat(request, env) {
@@ -1494,7 +1517,7 @@ async function handleChat(request, env) {
   const requestedModel = params.model || DEFAULT_MODEL;
   const mc = await resolveModelConfig(requestedModel);
   if (!mc) return jsonResponse({ error: { message: "Model not available: " + requestedModel, type: "unsupported_model" } }, 400);
-  return executeChat(env, params, mc, isStream, "chat", getClientId(request));
+  return executeChat(env, params, mc, isStream, "chat", getClientId(request, params));
 }
 
 // OpenAI Responses API（/v1/responses）入口：把 Responses 请求翻译成 chat completions 上游调用
@@ -1505,7 +1528,7 @@ async function handleResponses(request, env) {
   const requestedModel = params.model || DEFAULT_MODEL;
   const mc = await resolveModelConfig(requestedModel);
   if (!mc) return jsonResponse({ error: { message: "Model not available: " + requestedModel, type: "unsupported_model" } }, 400);
-  return executeChat(env, responsesToChatParams(params, mc), mc, isStream, "responses", getClientId(request));
+  return executeChat(env, responsesToChatParams(params, mc), mc, isStream, "responses", getClientId(request, params));
 }
 
 // Responses API 请求 → chat completions 参数（字段名/结构翻译）
@@ -1987,7 +2010,7 @@ async function handleAnthropicMessages(request, env) {
   const mc = findModelConfig(openaiModel);
   if (!mc) return anthropicError("Model not available: " + (body.model || ""), "invalid_request_error", 400);
   const chat = anthropicToChat(body, mc);
-  const response = await executeChat(env, chat, mc, !!chat.stream, "chat", getClientId(request));
+  const response = await executeChat(env, chat, mc, !!chat.stream, "chat", getClientId(request, body));
   if (response.status >= 400) {
     let msg = "Upstream error"; try { const data = await response.json(); msg = data?.error?.message || msg; } catch {}
     const types = { 400: "invalid_request_error", 401: "authentication_error", 403: "permission_error", 429: "rate_limit_error", 503: "overloaded_error" };
