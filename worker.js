@@ -589,6 +589,29 @@ const cooldowns = new Map();      // token -> 冷却到期 ms
 const lastUsed = new Map();       // token -> 最近被选用 ms
 const sessCache = new Map();      // `${clientId}|${token}:${sessionModel}` -> { instanceId, model, remainingMs, expiresAt }（必须带 token，多账号防串号）
 
+// 账号"处理中"占用标记（v1.10.1 并发分散）：
+// 一个请求选中某账号并开始建 session/跑 chat 后，标记该号"占用中"（流式期间保持，
+// TTL 兜底防泄漏）；pickToken 的空闲优先阶段会跳过占用中的号，让同时到达的
+// 多个会话自动分散到不同账号，而不是全部堆在第一个被选中的号上。
+// 同一会话的串行多轮对话仍由钉号阶段接管（复用 session 不扣额度）。
+const busyTokens = new Map();     // token -> { clientId, until }
+const BUSY_TTL_MS = 3 * 60 * 1000; // 3 分钟兜底（流式请求通常远小于此；结束时主动释放）
+
+function markBusy(token, clientId) {
+  if (token) busyTokens.set(token, { clientId, until: Date.now() + BUSY_TTL_MS });
+}
+function clearBusy(token, clientId) {
+  const e = busyTokens.get(token);
+  if (e && e.clientId === clientId) busyTokens.delete(token);
+}
+// 该号是否正被"其他"客户端占用（同一 clientId 的钉号复用不受影响）
+function isBusyByOther(token, clientId) {
+  const e = busyTokens.get(token);
+  if (!e) return false;
+  if (Date.now() > e.until) { busyTokens.delete(token); return false; }
+  return e.clientId !== clientId;
+}
+
 // sessCache key：按客户端隔离（多主机共用反代时，各主机钉各自的账号，不互相抢 session）
 // 无 clientId 时退化为旧格式 `${token}:${sessionModel}`（兼容旧调用）
 function sessKey(clientId, token, sessionModel) {
@@ -753,7 +776,8 @@ function pickToken(env, sessionModel, clientId = "") {
 
   // v1.10.0 空闲优先（多会话分散）：走到这里说明"本客户端在该模型下没有活跃 session"，
   // 即这是一个新会话/新客户端。此时优先调度**空闲账号**——未被任何客户端租用
-  // session（isTokenClaimedByOther=false）、未冷却的号，轮询分散。
+  // session（isTokenClaimedByOther=false）、未被其他请求占用处理中（isBusyByOther=false）、
+  // 未冷却的号，轮询分散。
   // 这样同时开多个会话时，各自落到不同账号上，避免都堆在第一个被创建的账号；
   // 而同一会话的多轮对话仍由上面的"钉号"阶段接管（复用 session 不扣额度）。
   if (sessionModel) {
@@ -761,6 +785,7 @@ function pickToken(env, sessionModel, clientId = "") {
       const t = acct.token;
       if (cooldowns.has(t) && cooldowns.get(t) > Date.now()) return false;
       if (isTokenClaimedByOther(t, clientId)) return false; // 该号 session 已被其他客户端租用
+      if (isBusyByOther(t, clientId)) return false;         // 该号正被其他请求占用处理中
       return true;
     });
     if (idle.length > 0) {
@@ -1630,6 +1655,7 @@ async function executeCodeReview(env, chatParams, mc, isStream, mode, clientId =
     const acct = pickToken(env, mc.session, clientId);
     const token = acct ? acct.token : null;
     if (!token) break;
+    markBusy(token, clientId);   // 并发分散：本请求占用该号，其他新会话避开
     logAccountRoute(debug, pool, token, mc.session, acctTry + 1,
       isUsableSession(sessCache.get(sessKey(clientId, token, mc.session))) ? "active_session" : "quota_or_round_robin");
     let rootRunId = null;
@@ -1672,8 +1698,10 @@ async function executeCodeReview(env, chatParams, mc, isStream, mode, clientId =
 
       if (isStream) {
         const { readable, writable } = new TransformStream();
-        if (mode === "responses") pipeUpstreamToResponsesStream(resp.body, writable, mc, finalize);
-        else pipeUpstreamToClient(resp.body, writable, finalize);
+        // 流式：busy 保持到流结束（finalize 后释放）
+        const onDone = async () => { await finalize(); clearBusy(token, clientId); };
+        if (mode === "responses") pipeUpstreamToResponsesStream(resp.body, writable, mc, onDone);
+        else pipeUpstreamToClient(resp.body, writable, onDone);
         return new Response(readable, {
           status: 200,
           headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", ...corsHeaders() },
@@ -1684,8 +1712,10 @@ async function executeCodeReview(env, chatParams, mc, isStream, mode, clientId =
         ? await responsesToNonStream(resp.body, mc)
         : await streamToNonStream(resp.body, reviewerModel);
       await finalize();
+      clearBusy(token, clientId);
       return mode === "responses" ? jsonResponse(result, 200) : jsonResponse(result, 200);
     } catch (e) {
+      clearBusy(token, clientId);
       console.error("[code_review]", e);
       // 官方下线/窗口限制模型：全局失败，立即返回，不换号。
       if (e instanceof ModelUnavailableError) {
@@ -1714,6 +1744,7 @@ async function executeChat(env, chatParams, mc, isStream, mode, clientId = "defa
     const acct = pickToken(env, mc.session, clientId);
     const token = acct ? acct.token : null;
     if (!token) break;
+    markBusy(token, clientId);   // 并发分散：本请求占用该号，其他新会话避开
     logAccountRoute(debug, pool, token, mc.session, acctTry + 1,
       isUsableSession(sessCache.get(sessKey(clientId, token, mc.session))) ? "active_session" : "quota_or_round_robin");
     try {
@@ -1795,21 +1826,31 @@ async function executeChat(env, chatParams, mc, isStream, mode, clientId = "defa
       if (!resp.ok) {
         lastErrMsg = "upstream error: " + (errText || "").slice(0, 300);
         if (debug) console.log(`[acct ${acctTry + 1}] failed ${resp.status}, switch account`);
+        clearBusy(token, clientId);
         continue;
       }
 
       if (isStream) {
         const { readable, writable } = new TransformStream();
-        if (mode === "responses") pipeUpstreamToResponsesStream(resp.body, writable, mc);
-        else pipeUpstreamToClient(resp.body, writable);
+        // 流式：busy 标记保持到流结束（onComplete 回调里释放），
+        // 流式期间其他新会话仍会避开该号
+        const release = () => clearBusy(token, clientId);
+        if (mode === "responses") pipeUpstreamToResponsesStream(resp.body, writable, mc, release);
+        else pipeUpstreamToClient(resp.body, writable, release);
         return new Response(readable, { status: 200, headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", ...corsHeaders() } });
       }
 
-      if (mode === "responses") return jsonResponse(await responsesToNonStream(resp.body, mc), 200);
+      if (mode === "responses") {
+        const out = await responsesToNonStream(resp.body, mc);
+        clearBusy(token, clientId);
+        return jsonResponse(out, 200);
+      }
 
       const agg = await streamToNonStream(resp.body, mc.upstream);
+      clearBusy(token, clientId);
       return jsonResponse(agg, 200);
     } catch (e) {
+      clearBusy(token, clientId);
       console.error("[" + mode + "]", e);
       const msg = String(e.message || e);
       // 官方下线/窗口限制模型：全局失败，立即向客户端返回明确错误，不换号、不计冷却。
