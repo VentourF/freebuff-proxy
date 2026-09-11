@@ -1,0 +1,40 @@
+{
+  "generatedAt": "2026-09-11",
+  "source": "WorkBuddy acc-product-config-v3.json (workbuddy-product-spill-0GjOa5)",
+  "baseUrl": "https://www.workbuddy.ai",
+  "chatPath": "/v2/chat/completions",
+  "note": "仅保留 deepseek-v4.1-flash（用户指定）",
+  "models": [
+    {
+      "contextWindow": {
+        "defaultLength": 300000,
+        "supportedLengths": [
+          300000,
+          1000000
+        ]
+      },
+      "credits": "x0.03",
+      "descriptionEn": "DeepSeek flagship model, supporting 1M context window, native multimodal model",
+      "descriptionZh": "DeepSeek 旗舰模型，支持 1M 上下文窗口，原生多模态",
+      "id": "deepseek-v4.1-flash",
+      "maxAllowedSize": 1000000,
+      "maxInputTokens": 1000000,
+      "maxOutputTokens": 128000,
+      "name": "Deepseek-V4.1-Flash",
+      "onlyReasoning": true,
+      "reasoning": {
+        "effort": "high",
+        "summary": "auto"
+      },
+      "relatedModels": {
+        "lite": "deepseek-v4.1-flash",
+        "reasoning": "deepseek-v4.1-flash"
+      },
+      "supportsImages": true,
+      "supportsReasoning": true,
+      "supportsToolCall": true,
+      "temperature": 1,
+      "vendor": "f"
+    }
+  ]
+}
